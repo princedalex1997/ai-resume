@@ -1,0 +1,438 @@
+const express = require("express");
+const { z } = require("zod");
+const mongoose = require("mongoose");
+
+const asyncHandler = require("../utils/asyncHandler");
+const ApiError = require("../utils/ApiError");
+const { requiredAuth } = require("../middleware/auth");
+const { validate } = require("../middleware/validate");
+const { uploadPdf } = require("../middleware/upload");
+
+const Resume = require("../models/Resume");
+const ResumeVersion = require("../models/ResumeVersion");
+
+const { analyzeLimiter } = require("../middleware/rateLimit");
+const Analysis = require("../models/Analysis");
+const { analyzeResume } = require("../services/geminiService");
+
+const { extractText } = require("../services/pdfService");
+const {
+  parseResume: parseStructured,
+} = require("../services/structuredParser");
+const { parse } = require("zod/v4/core");
+const { diffText, summarized } = require("../services/diffService");
+const env = require("../config/env");
+
+const router = express.Router();
+
+router.use(requiredAuth);
+
+const objectIdSchema = z
+  .string()
+  .refine((v) => mongoose.isValidObjectId(v), { message: "Invalid id" });
+
+const idParam = z.object({ id: objectIdSchema });
+
+async function loadOwnResume(req) {
+  const resume = await Resume.findOne({
+    _id: req.params.id,
+    userId: req.user._id,
+  });
+  if (!resume) throw ApiError.notFound("Resume not Found");
+  return resume;
+}
+
+
+async function loadVersion(resumeId, versionId) {
+  // 1. Log incoming variables to track down exactly what is empty or misaligned
+  console.log(`🔍 Querying Version -> resumeId: "${resumeId}", versionId: "${versionId}"`);
+
+  // 2. Defensive check to prevent casting errors if strings are malformed/undefined
+  if (!resumeId || !versionId) {
+    throw ApiError.notFound("Version not Found: Missing target IDs");
+  }
+
+  try {
+    // 3. Cast both fields explicitly to Mongoose ObjectIds
+    const version = await ResumeVersion.findOne({
+      _id: new mongoose.Types.ObjectId(versionId),
+      resumeId: new mongoose.Types.ObjectId(resumeId),
+    });
+
+    if (!version) {
+      console.warn(`❌ No database match found for Version ID: ${versionId} linked to Resume ID: ${resumeId}`);
+      throw ApiError.notFound("Version not Found");
+    }
+
+    return version;
+  } catch (error) {
+    // Catch explicit casting errors (e.g. if the string length doesn't match 24-hex chars)
+    if (error.name === 'BSONError' || error.name === 'CastError') {
+      throw ApiError.notFound("Version not Found: Invalid ID format syntax");
+    }
+    throw error;
+  }
+}
+// UPLOAD FILE ULR : http://localhost:8000/api/resumes/
+router.post(
+  "/",
+  uploadPdf("file"),
+  asyncHandler(async (req, res) => {
+    const { text, meta } = await extractText(req.file.buffer);
+    const parsedSelection = await parseStructured(text);
+    const title =
+      (req.body.title || "").trim() ||
+      req.file?.originalname?.replace(/\.pdf$/i, "") ||
+      "Untitled Resume";
+
+    const resume = await Resume.create({
+      userId: req.user._id,
+      title,
+      latestVersionNumber: 1,
+    });
+
+    const version = await ResumeVersion.create({
+      resumeId: resume._id,
+      versionNumber: 1,
+      label: "V1",
+      rawText: text,
+      parsedSelection,
+      sourceType: "upload",
+      parentVersionId: null,
+    });
+
+    resume.currentVersionId = version._id;
+    await resume.save();
+
+    res.status(201).json({ resume, version, meta });
+  }),
+);
+
+// list RESUME : http://localhost:8000/api/resumes/
+
+router.get(
+  "/",
+  asyncHandler(async (req, res) => {
+    const resume = await Resume.find({ userId: req.user._id })
+      .sort({ updatedAt: -1 })
+      .lean();
+    res.json({ resume });
+  }),
+);
+//GET ANY PERTICULAR RESUME ADD ID : http://localhost:8000/api/resumes/${resume id}
+router.get(
+  "/:id",
+  validate(idParam, "params"),
+  asyncHandler(async (req, res) => {
+    const resume = await loadOwnResume(req);
+    const versions = await ResumeVersion.find({ resumeId: resume._id })
+      .sort({ versionNumber: 1 })
+      .select("-rawText")
+      .lean();
+    res.json({ resume, versions });
+  }),
+);
+
+// get resume and versions
+// url :http://localhost:8000/api/resumes/resumeID/versions/versionid
+router.get(
+  "/:id/versions/:versionId",
+  validate(
+    z.object({ id: objectIdSchema, versionId: objectIdSchema }),
+    "params",
+  ),
+  asyncHandler(async (req, res) => {
+    const resume = await loadOwnResume(req);
+    const version = await loadVersion(resume._id, req.params.versionId);
+    res.json({ version });
+  }),
+);
+
+//delete resume
+router.delete(
+  "/:id",
+  validate(idParam, "params"),
+  asyncHandler(async (req, res) => {
+    const resume = await loadOwnResume(req);
+    await ResumeVersion.deleteMany({ resumeId: resume._id });
+    await Analysis.deleteMany({ resumeId: resume._id });
+    await resume.deleteOne();
+    res.json({ ok: true });
+  }),
+);
+
+const analyzeBody = z
+  .object({
+    versionId: objectIdSchema.optional(),
+    targetRole: z.string().trim().max(120).optional(),
+  })
+  .optional();
+
+//post analyze resume : http://localhost:8000/api/resumes/${resume.id}/analyze
+router.post(
+  "/:id/analyze",
+  analyzeLimiter,
+  validate(idParam, "params"),
+  validate(analyzeBody),
+  asyncHandler(async (req, res) => {
+    const resume = await loadOwnResume(req);
+
+    // Ensure body is always an object
+    const body = req.body || {};
+
+    const versionId = body.versionId || resume.currentVersionId;
+
+    if (!versionId) {
+      throw ApiError.badRequest("No Version to Analyze");
+    }
+
+    const version = await loadVersion(resume._id, versionId);
+
+    const { analysis, model, promptTokens, responseTokens } =
+      await analyzeResume({
+        rawText: version.rawText.slice(0, 15000),
+        targetRole: body.targetRole,
+      });
+    console.log("SUMMARY BEFORE SAVE:".yellow.bold, analysis.summary);
+    const saved = await Analysis.create({
+      userId: req.user._id,
+      resumeId: resume._id,
+      versionId: version._id,
+      atsScore: analysis.atsScore,
+      scoreBreakdown: analysis.scoreBreakdown,
+      issues: analysis.issues,
+      strengths: analysis.strengths,
+      bulletRewrites: analysis.bulletRewrites,
+      keywordsPresent: analysis.keywordsPresent,
+      keywordsMissing: analysis.keywordsMissing,
+      summary: analysis.summary,
+      model,
+      promptTokens,
+      responseTokens,
+    });
+
+    version.latestAnalysisId = saved._id;
+    await Promise.all([version.save()]);
+
+    res.status(201).json({
+      success: true,
+      analysis: saved,
+    });
+  }),
+);
+
+// to get analysze resume url + resumeId:
+//  http://localhost:8000/api/resumes/resumeid/analyze
+router.get(
+  "/:id/analyze",
+  validate(idParam, "params"),
+  asyncHandler(async (req, res) => {
+    const resume = await loadOwnResume(req);
+    const analyses = await Analysis.find({ resumeId: resume._id })
+      .sort({ createdAt: -1 })
+      .lean();
+    res.json({ analyses });
+  }),
+);
+
+router.get(
+  "/:id/analyze/:versionId/analyze",
+  validate(
+    z.object({ id: objectIdSchema, versionId: objectIdSchema }),
+    "params",
+  ),
+  asyncHandler(async (req, res) => {
+    const resume = await loadOwnResume(req);
+    const version = await loadVersion(resume._id, req.params.versionId);
+    const analysis = await Analysis.findOne({
+      resumeId: resume._id,
+      versionId: version._id,
+    })
+      .sort({ createdAt: -1 })
+      .lean();
+    res.json({ analyses });
+  }),
+);
+
+const rewriteBody = z.object({
+  analysisId: objectIdSchema,
+  rewriteIds: z.array(objectIdSchema).optional(),
+  label: z.string().trim().max(40).optional(),
+});
+
+function applyRewritesToText(rawText, rewrites) {
+  let result = rawText;
+  for (const r of rewrites) {
+    if (!r.original || !r.rewritten) continue;
+    const idx = result.indexOf(r.original);
+    if (idx >= 0) {
+      result =
+        result.slice(0, idx) +
+        r.rewritten +
+        result.slice(idx + r.original.length);
+    } else {
+      result += `\n${r.rewritten}`;
+    }
+  }
+  return result;
+}
+
+function patchBulletesInSection(cloned, sectionId) {
+  // 1. Safety check: Handle null or undefined values safely
+  if (!cloned) {
+    console.error("patchBulletesInSection received a null or undefined target.");
+    return null; 
+  }
+
+  // 2. If it's a plain object, check if the array is nested inside an internal key
+  // Common Gemini output structures: cloned.sections, cloned.data, or Object.values
+  let targetArray = Array.isArray(cloned) ? cloned : null;
+
+  if (!targetArray && typeof cloned === 'object') {
+    // If your AI response wraps arrays inside keys like 'sections' or 'experience'
+    targetArray = cloned.sections || cloned.experience || cloned.items || null;
+    
+    // Fallback: If it's a structured dictionary object, convert values to an iterable array
+    if (!targetArray) {
+      targetArray = Object.values(cloned);
+    }
+  }
+
+  // 3. Fallback check: If we still don't have an array, abort gracefully instead of crashing
+  if (!targetArray || typeof targetArray.find !== 'function') {
+    console.error("Expected an array but received type:", typeof cloned, "Structure:", cloned);
+    return cloned; // Return it untouched to protect the request cycle from breaking
+  }
+
+  // 4. Safe execution
+  const target = targetArray.find(item => item && (item.id === sectionId || item._id === sectionId));
+  
+  if (!target) {
+    console.warn(`No item matching sectionId "${sectionId}" was found in the target array.`);
+  }
+
+  return target;
+}
+
+function looksEmpty(sections) {
+  if (!sections) return true;
+  const b = sections.basics || {};
+  const hasIdentity = b.name || b.email || b.title;
+
+  const hasBody =
+    sections.summary ||
+    sections.experience?.length ||
+    sections.education?.length ||
+    sections.skills?.length;
+  return !hasIdentity && !hasBody;
+}
+
+//data fetch from analysis
+
+router.post(
+  "/:id/rewrite",
+  validate(idParam, "params"),
+  validate(rewriteBody),
+  asyncHandler(async (req, res) => {
+    const resume = await loadOwnResume(req);
+    const analysis = await Analysis.findOne({
+      _id: req.body?.analysisId,
+      resumeId: resume?._id,
+    });
+
+    if (!analysis) throw ApiError.notFound("Analysis Not found");
+
+    const baseVersion = await loadVersion(resume._id, analysis.versionId);
+
+    console.log("STATED");
+    console.log("ANALYSISX", analysis);
+
+    const selected = req.body?.rewriteIds?.length
+      ? analysis.bulletRewrites.filter((r) =>
+          req.body?.rewriteIds.includes(r?._id.toString()),
+        )
+      : analysis.bulletRewrites;
+
+    if (!selected.length) {
+      throw ApiError.badRequest("No rewrites selected to apply");
+    }
+
+    const newRaw = applyRewritesToText(baseVersion.rawText, selected);
+
+    const patchedFromBase = patchBulletesInSection(
+      baseVersion.parsedSelection,
+      selected,
+    );
+
+    const reparsed = await parseStructured(newRaw);
+    const finalParsed = looksEmpty(reparsed) ? patchedFromBase : reparsed;
+
+    const nextNumber = resume.latestVersionNumber + 1;
+
+    const newVersion = await ResumeVersion.create({
+      resumeId: resume?._id,
+      versionNumber: nextNumber,
+      label: req.body?.label?.trim() || ` V${nextNumber}`,
+      rawText: newRaw,
+      parsedSelection: finalParsed,
+      sourceType: "rewrite",
+      parentVersionId: baseVersion?._id,
+    });
+
+    resume.latestVersionNumber = nextNumber;
+    resume.currentVersionId = newVersion?._id;
+
+    await resume.save();
+    res.status(201).json({
+      version: newVersion,
+      appliedCount: selected.length,
+    });
+  }),
+);
+
+const diffQuery = z.object({
+  from: objectIdSchema,
+  to: objectIdSchema,
+  mode: z.enum(["words", "lines"]).optional(),
+});
+
+router.get(
+  "/:id/diff",
+  validate(idParam, "params"),
+  validate(diffQuery, "query"),
+  asyncHandler(async (req, res) => {
+    // 1. FIX: Added 'await' so resume is the actual document object instead of a Promise
+    const resume = await loadOwnResume(req);
+    
+    if (!resume) {
+      throw ApiError.notFound("Resume record not found or unauthorized");
+    }
+
+    // 2. Safely pass the resolved resume ID down to your loaders
+    const [fromV, toV] = await Promise.all([
+      loadVersion(resume._id, req.query.from),
+      loadVersion(resume._id, req.query.to),
+    ]);
+
+    // Compute the text diff
+    const parts = diffText(fromV.rawText, toV.rawText, req.query.mode);
+    
+    // 3. FIX: Changed 'to' references to 'toV' to match your destructured array variables
+    res.json({
+      from: {
+        id: fromV._id,
+        label: fromV?.label,
+        versionNumber: fromV.versionNumber,
+      },
+      to: { 
+        id: toV._id,            // Fixed reference
+        label: toV?.label,      // Fixed reference
+        versionNumber: toV.versionNumber, // Fixed key name mismatch (was: 'to: fromV.versionNumber')
+      },
+      parts,
+      stats: summarized(parts),
+    });
+  }),
+);
+
+module.exports = router;
