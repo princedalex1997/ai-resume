@@ -1,9 +1,10 @@
-const mongoose = require("mongoose")
+const mongoose = require("mongoose");
 // const { default: mongoose } = require("mongoose");
 const env = require("./env");
-const colors = require("colors")
+const colors = require("colors");
+const dns = require("dns");
 
-
+dns.setServers(["8.8.8.8", "1.1.1.1"]);
 mongoose.set("strictQuery", true);
 
 async function connectDB() {
@@ -12,7 +13,8 @@ async function connectDB() {
   });
 
   console.log(
-    `MongoDB Connected : ${conn.connection.host}/${conn.connection.name}`.yellow.bold
+    `MongoDB Connected : ${conn.connection.host}/${conn.connection.name}`.yellow
+      .bold,
   );
 
   mongoose.connection.on("error", (err) => {

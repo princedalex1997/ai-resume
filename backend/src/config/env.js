@@ -19,7 +19,8 @@ module.exports = {
   jwtExpressin: process.env.JET_EXPRESS_IN || "5d",
   cookieName: process.env.JET_EXPRESS_IN || "arr-_token",
   clientOrgins: (
-    process.env.CLIENT_ORGIN || "http://localhost:5173 ,http://localhost:5174")
+    process.env.CLIENT_ORGIN || "http://localhost:5173 ,http://localhost:5174"
+  )
     .split(",")
     .map((o) => o.trim())
     .filter(Boolean),

@@ -15,7 +15,10 @@ const healthRouter = require("./routes/health");
 const authRouter = require("./routes/auth");
 const resumeRouter = require("./routes/resume");
 
-const dashboardRouter = require("./routes/dashboard")
+const dashboardRouter = require("./routes/dashboard");
+const insightRoute = require("./routes/insights");
+const versionsRouter = require("./routes/versions");
+const historyRouter = require("./routes/history");
 
 const app = express();
 // const PORT = process.env.PORT || 5000;
@@ -45,6 +48,9 @@ http: app.use("/api/auth", authRouter);
 http: app.use("/api/resumes", resumeRouter);
 
 http: app.use("/api/dashboard", dashboardRouter);
+http: app.use("/api/insight", insightRoute);
+http: app.use("/api/versions", versionsRouter);
+http: app.use("/api/history", historyRouter);
 
 app.use(notFound);
 app.use(errorHandler);
@@ -58,12 +64,10 @@ async function start() {
       );
     });
   } catch (error) {
-    console.error("Server not Connected".red.bold, error.message || error);
+    console.error("Server not Connected".red.bold, error || error);
     process.exit(1);
   }
 }
-
-
 
 process.on("unhandledRejection", (res) => {
   console.error("unhandled Rejection", res);
