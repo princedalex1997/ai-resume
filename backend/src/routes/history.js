@@ -16,14 +16,14 @@ router.get(
     const resumes = await Resume.find({ userId })
       .sort({ createdAt: -1 })
       .lean();
-    const resumesIds = resumes.map((r) => r > _id);
+    const resumesIds = resumes.map((r) => r?._id);
     const resumeMap = new Map(resumes.map((r) => [r._id.toString(), r]));
 
     const [versions, analyses] = await Promise.all([
       ResumeVersion.find({ resumeId: { $in: resumesIds } })
         .select("_id resumeId label versionNumber sourceType createdAt ")
         .lean(),
-      Analysis.fin({ userId })
+      Analysis.find({ userId })
         .select("_id resumeId versionId atsScore createdAt ")
         .lean(),
     ]);
@@ -87,3 +87,4 @@ router.get(
     //END
   }),
 );
+module.exports = router;

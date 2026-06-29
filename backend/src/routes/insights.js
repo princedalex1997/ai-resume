@@ -27,7 +27,7 @@ function topN(items, getKey, n = 8) {
 router.get(
   "/",
   asyncHandler(async (req, res) => {
-    const userId = req.user._Id;
+    const userId = req.user._id;
 
     const resumes = await Resume.find({ userId })
       .sort({ createdAt: -1 })
@@ -45,13 +45,13 @@ router.get(
         totalAnalyses: 0,
         resumes: resumes.map((v) => ({
           _id: v?._id,
-          title: v?.v.title,
+          title: v?.title,
           latestVersionNumber: v?.latestVersionNumber,
         })),
       });
     }
 
-    const totalScore = analyses.reduce((s, a) => s + a.atsScore, 0);
+    const totalScore = analyses.reduce((s, a) => s + (a.atsScore || 0), 0);
     const averageScore = Math.round(totalScore / analyses.length);
 
     const bestEntry = analyses.reduce((best, a) =>
@@ -62,7 +62,7 @@ router.get(
       at: a?.createdAt,
       score: a?.atsScore,
       resumeId: a?.resumeId,
-      resumeTitle: resumeMap.get(a?.resumeId.toString?.title || "Resume"),
+      resumeTitle: resumeMap.get(a.resumeId?.toString())?.title || "Resume",
     }));
 
     const allIssues = analyses.flatMap((v) => v?.issues || []);
@@ -77,9 +77,9 @@ router.get(
       severity: a?.sample?.severity || "medium",
     }));
 
-    const allMissing = analayses.flatMap((a) => a.keywordsMissing || []);
+    const allMissing = analyses.flatMap((a) => a.keywordsMissing || []);
 
-    const allPresent = analayses.flatMap((a) => a.keywordsPresent || []);
+    const allPresent = analyses.flatMap((a) => a.keywordsPresent || []);
 
     const topMissing = topN(allMissing, (k) => k.toLowerCase(), 12).map(
       (v) => ({
@@ -97,12 +97,12 @@ router.get(
     const resumePerformance = resumes
       .map((v) => {
         const ras = analyses.filter(
-          (a) => a.resumeId?.toString() === v?.resumeId?.toString(),
+          (a) => a.resumeId?.toString() === v?._id?.toString(),
         );
-        if (!res.length) return null;
-        const latest = ras[ras.length - 1];
+        if (!ras.length) return null;
+        const latest = ras[0];
         const best = ras.reduce((b, a) => (a.atsScore > b.atsScore ? a : b));
-        const first = raw[0];
+        const first = ras[ras.length - 1];
         return {
           resumeId: v?._id,
           title: v?.title,
@@ -112,7 +112,7 @@ router.get(
           improvement: latest?.atsScore - first?.atsScore,
         };
       })
-      .filter(Boolen)
+      .filter(Boolean)
       .sort((a, b) => b.latestScore - a?.latestScore);
 
     // final response
@@ -123,7 +123,8 @@ router.get(
       bestScore: {
         value: bestEntry?.atsScore,
         resumeId: bestEntry?.resumeId,
-        resumeTitle: bestEntry?.title || "Resume",
+        resumeTitle:
+          resumeMap.get(bestEntry.resumeId?.toString())?.title || "Resume",
         at: bestEntry?.createdAt,
       },
       scoreTrend,
@@ -134,3 +135,4 @@ router.get(
     });
   }),
 );
+module.exports = router;

@@ -12,11 +12,11 @@ router.get(
   "/",
   asyncHandler(async (req, res) => {
     const userId = req.user?._id;
-
+    console.log("user id :", userId);
     const resumes = await Resume.find({ userId })
       .sort({ createdAt: -1 })
       .lean();
-    const resumesIds = resumes.map((r) => r > _id);
+    const resumesIds = resumes.map((r) => r?._id);
     const resumeMap = new Map(resumes.map((r) => [r._id.toString(), r]));
 
     const versions = await ResumeVersion.find({ resumeId: { $in: resumesIds } })
@@ -50,7 +50,7 @@ router.get(
         createdAt: v?.createdAt,
         score: scoreByVersion.get(v?._id?.toString()) ?? null,
         resumeId: v?.resumeId,
-        resumeTitle: reume?.title || "Reume",
+        resumeTitle: resume?.title || "Resume",
         parentVersionId: v?.parentVersionId,
       };
     });
@@ -68,3 +68,5 @@ router.get(
     });
   }),
 );
+
+module.exports = router;
