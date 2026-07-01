@@ -33,6 +33,9 @@ export default function Dashboard() {
 
   if (isLoading) return <DashboardSkeleton />;
 
+  console.warn("loading", isLoading);
+  console.error("error :", error);
+
   if (error) {
     return (
       <EmptyState

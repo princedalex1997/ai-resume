@@ -1,4 +1,10 @@
-import { createContext, useContext, useEffect, useState, useCallback } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useCallback,
+} from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { authApi } from "@/api/auth";
 
@@ -52,7 +58,9 @@ export function AuthProvider({ children }) {
   }, [queryClient]);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, refresh, updateProfile }}>
+    <AuthContext.Provider
+      value={{ user, loading, login, register, logout, refresh, updateProfile }}
+    >
       {children}
     </AuthContext.Provider>
   );

@@ -26,6 +26,7 @@ export default function Login() {
       await login(form);
       nav("/dashboard");
     } catch (e) {
+      console.error("Eror is :", e);
       setErr(e.message || "Login failed");
     } finally {
       setLoading(false);
@@ -58,6 +59,10 @@ export default function Login() {
         <p className="text-(--ink-muted) mt-2 text-[15px]">
           Sign in to keep sharpening your resume.
         </p>
+        <>
+          <p>email@gmail.com</p>
+          <p>12345678</p>
+        </>
 
         <form onSubmit={onSubmit} className="mt-9 space-y-4">
           <AuthField
@@ -72,7 +77,7 @@ export default function Login() {
 
           <AuthField
             label="Password"
-            type="password"
+            type="text"
             autoComplete="current-password"
             value={form.password}
             onChange={(v) => setForm({ ...form, password: v })}

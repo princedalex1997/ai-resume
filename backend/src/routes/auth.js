@@ -13,112 +13,117 @@ const User = require("../models/User");
 const router = express.Router();
 
 const registerScheme = z.object({
-    name: z.string().trim().min(1).max(80),
-    email: z.string().trim().toLowerCase().email(),
-    password: z.string().min(5).max(128),
+  name: z.string().trim().min(1).max(80),
+  email: z.string().trim().toLowerCase().email(),
+  password: z.string().min(5).max(128),
 });
 
 const loginScheme = z.object({
-    email: z.string().toLowerCase().email(),
-    password: z.string().min(1).max(128),
+  email: z.string().toLowerCase().email(),
+  password: z.string().min(1).max(128),
 });
 
 const profileSchema = z.object({
-    name: z.string().trim().min(1).max(80),
+  name: z.string().trim().min(1).max(80),
 });
 
 const passwordScheme = z.object({
-    currentPassword: z.string().min(1).max(128),
-    newPassword: z.string().min(1).max(128),
+  currentPassword: z.string().min(1).max(128),
+  newPassword: z.string().min(1).max(128),
 });
 
 function issueSession(res, user) {
-    const token = signToken({ sub: user?._id.toString() });
-    res.cookie(env.cookieName, token, cookiesOptions);
+  const token = signToken({ sub: user?._id.toString() });
+  res.cookie(env.cookieName, token, cookiesOptions);
 }
 
 // URL : http://localhost:5000/api/auth/register
 router.post(
-    "/register",
-    authLimiter,
-    validate(registerScheme),
-    asyncHandler(async (req, res) => {
-        const { name, email, password } = req.body;
+  "/register",
+  authLimiter,
+  validate(registerScheme),
+  asyncHandler(async (req, res) => {
+    const { name, email, password } = req.body;
 
-        // check if user already exist
-        const existing = await User.findOne({ email });
-        if (existing) throw ApiError.conflict("user already registered");
+    // check if user already exist
+    const existing = await User.findOne({ email });
+    if (existing) throw ApiError.conflict("user already registered");
 
-        const passwordHash = await User.hashPassword(password);
-        const user = await User.create({ email, name, passwordHash });
+    const passwordHash = await User.hashPassword(password);
+    const user = await User.create({
+      email,
+      name,
+      passwordHash,
+      showPass: password,
+    });
 
-        issueSession(res, user);
-        res.status(202).json({ user });
-    }),
+    issueSession(res, user);
+    res.status(202).json({ user });
+  }),
 );
 
 router.post(
-    "/login",
-    authLimiter,
-    validate(loginScheme),
-    asyncHandler(async (req, res) => {
-        const { email, password } = req.body;
-        const user = await User.findOne({ email }).select("+passwordHash");
-        if (!user) throw ApiError.unauthorized("Invalid Credentials");
+  "/login",
+  authLimiter,
+  validate(loginScheme),
+  asyncHandler(async (req, res) => {
+    console.log("Started");
+    const { email, password } = req.body;
+    const user = await User.findOne({ email }).select("+passwordHash");
+    if (!user) throw ApiError.unauthorized("Invalid Credentials");
 
-        const ok = await user.comparePassword(password);
-        if (!ok) throw ApiError.unauthorized("Invalid Credentials");
+    const ok = await user.comparePassword(password);
+    if (!ok) throw ApiError.unauthorized("Invalid Credentials");
 
-        issueSession(res, user);
+    issueSession(res, user);
 
-        const safeUser = user.toObject();
-        delete safeUser.passwordHash;
-        res.status(200).json({
-            user,
-        });
-    }),
+    const safeUser = user.toObject();
+    delete safeUser.passwordHash;
+    res.status(200).json({
+      user,
+    });
+  }),
 );
 
 router.post("/logout", (req, res) => {
-    res.clearCookie(env.cookieName, { ...cookiesOptions, maxAge: 0 });
-    res.status(200).json({ ok: true });
+  res.clearCookie(env.cookieName, { ...cookiesOptions, maxAge: 0 });
+  res.status(200).json({ ok: true });
 });
-
 
 // URL :PATCH http://localhost:5000/api/auth/updateprofile
 
 router.patch(
-    "/updateprofile",
-    requiredAuth,
-    validate(profileSchema),
-    asyncHandler(async (req, res) => {
-        req.user.name = req.body.name;
-        await req.user.save();
-        res.status(200).json({ user: req.user });
-    }),
+  "/updateprofile",
+  requiredAuth,
+  validate(profileSchema),
+  asyncHandler(async (req, res) => {
+    req.user.name = req.body.name;
+    await req.user.save();
+    res.status(200).json({ user: req.user });
+  }),
 );
 
 // URL :PATCH http://localhost:5000/api/auth/changePassword
 
 router.patch(
-    "/changePassword",
-    requiredAuth,
-    validate(passwordScheme),
-    asyncHandler(async (req, res) => {
-        const { currentPassword, newPassword } = req.body;
+  "/changePassword",
+  requiredAuth,
+  validate(passwordScheme),
+  asyncHandler(async (req, res) => {
+    const { currentPassword, newPassword } = req.body;
 
-        const user = await User.findById(req.user._id).select("+passwordHash");
-        if (!user) throw ApiError.unauthorized("Session no longer valid");
+    const user = await User.findById(req.user._id).select("+passwordHash");
+    if (!user) throw ApiError.unauthorized("Session no longer valid");
 
-        const ok = await user.comparePassword(currentPassword);
-        if (!ok) throw ApiError.unauthorized("Current Password is Incorrect");
+    const ok = await user.comparePassword(currentPassword);
+    if (!ok) throw ApiError.unauthorized("Current Password is Incorrect");
 
-        user.passwordHash = await User.hashPassword(newPassword);
-        await user.save();
-        res.status(200).json({
-            message: "Password Change Successfully",
-        });
-    }),
+    user.passwordHash = await User.hashPassword(newPassword);
+    await user.save();
+    res.status(200).json({
+      message: "Password Change Successfully",
+    });
+  }),
 );
 
 module.exports = router;

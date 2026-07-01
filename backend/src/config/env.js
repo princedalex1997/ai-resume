@@ -4,11 +4,11 @@ const path = require("path");
 dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 
 const required = ["MONGO_URL", "JWT_SECRET"];
-const missing = required.filter((key) => process.env[key]);
+const missing = required.filter((key) => !process.env[key]);
 
 if (missing.length) {
   console.error("Missiing filed from .env file");
-  process.eventNames(1);
+  process.exit(1);
 }
 
 module.exports = {
@@ -17,7 +17,7 @@ module.exports = {
   mongoUri: process.env.MONGO_URL,
   jwtSecret: process.env.JWT_SECRET,
   jwtExpressin: process.env.JET_EXPRESS_IN || "5d",
-  cookieName: process.env.JET_EXPRESS_IN || "arr-_token",
+  cookieName: process.env.COOKIE_NAME || "arr-_token",
   clientOrgins: (
     process.env.CLIENT_ORGIN || "http://localhost:5173 ,http://localhost:5174"
   )
@@ -26,5 +26,6 @@ module.exports = {
     .filter(Boolean),
   geminiApiKey: process.env.GEMINI_API_KEY,
   geminiModal: process.env.GEMINI_MODAL,
-  isProd: process.env.NODE_ENV === "production",
+  // isProd: process.env.NODE_ENV === "production", // false
+  isProd: process.env.NODE_ENV === "development", // true
 };

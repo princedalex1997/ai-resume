@@ -12,7 +12,6 @@ router.get(
   "/",
   asyncHandler(async (req, res) => {
     const userId = req.user?._id;
-
     const resumes = await Resume.find({ userId })
       .sort({ updatedAt: -1 })
       .lean();
@@ -137,7 +136,7 @@ router.get(
         delta: null,
         spark: versionsSpark,
       },
-      issueIdentified: {
+      issuesIdentified: {
         value: latestAnalysis ? latestAnalysis?.issues?.length || 0 : null,
         delta:
           latestAnalysis && prevAnalysis
@@ -224,8 +223,8 @@ router.get(
     // );
 
     const activity = events
-  .sort((a, b) => new Date(b.at) - new Date(a.at))
-  .slice(0, 8);
+      .sort((a, b) => new Date(b.at) - new Date(a.at))
+      .slice(0, 8);
 
     res.json({
       totals: {
