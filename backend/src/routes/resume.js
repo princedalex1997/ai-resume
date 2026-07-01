@@ -42,10 +42,11 @@ async function loadOwnResume(req) {
   return resume;
 }
 
-
 async function loadVersion(resumeId, versionId) {
   // 1. Log incoming variables to track down exactly what is empty or misaligned
-  console.log(`🔍 Querying Version -> resumeId: "${resumeId}", versionId: "${versionId}"`);
+  console.log(
+    `🔍 Querying Version -> resumeId: "${resumeId}", versionId: "${versionId}"`,
+  );
 
   // 2. Defensive check to prevent casting errors if strings are malformed/undefined
   if (!resumeId || !versionId) {
@@ -60,14 +61,16 @@ async function loadVersion(resumeId, versionId) {
     });
 
     if (!version) {
-      console.warn(`❌ No database match found for Version ID: ${versionId} linked to Resume ID: ${resumeId}`);
+      console.warn(
+        `❌ No database match found for Version ID: ${versionId} linked to Resume ID: ${resumeId}`,
+      );
       throw ApiError.notFound("Version not Found");
     }
 
     return version;
   } catch (error) {
     // Catch explicit casting errors (e.g. if the string length doesn't match 24-hex chars)
-    if (error.name === 'BSONError' || error.name === 'CastError') {
+    if (error.name === "BSONError" || error.name === "CastError") {
       throw ApiError.notFound("Version not Found: Invalid ID format syntax");
     }
     throw error;
@@ -176,10 +179,7 @@ router.post(
   validate(analyzeBody),
   asyncHandler(async (req, res) => {
     const resume = await loadOwnResume(req);
-
-    // Ensure body is always an object
     const body = req.body || {};
-
     const versionId = body.versionId || resume.currentVersionId;
 
     if (!versionId) {
@@ -193,7 +193,6 @@ router.post(
         rawText: version.rawText.slice(0, 15000),
         targetRole: body.targetRole,
       });
-    console.log("SUMMARY BEFORE SAVE:".yellow.bold, analysis.summary);
     const saved = await Analysis.create({
       userId: req.user._id,
       resumeId: resume._id,
@@ -280,7 +279,9 @@ function applyRewritesToText(rawText, rewrites) {
 function patchBulletesInSection(cloned, sectionId) {
   // 1. Safety check: Handle null or undefined values safely
   if (!cloned) {
-    console.error("patchBulletesInSection received a null or undefined target.");
+    console.error(
+      "patchBulletesInSection received a null or undefined target.",
+    );
     return null;
   }
 
@@ -288,7 +289,7 @@ function patchBulletesInSection(cloned, sectionId) {
   // Common Gemini output structures: cloned.sections, cloned.data, or Object.values
   let targetArray = Array.isArray(cloned) ? cloned : null;
 
-  if (!targetArray && typeof cloned === 'object') {
+  if (!targetArray && typeof cloned === "object") {
     // If your AI response wraps arrays inside keys like 'sections' or 'experience'
     targetArray = cloned.sections || cloned.experience || cloned.items || null;
 
@@ -299,16 +300,25 @@ function patchBulletesInSection(cloned, sectionId) {
   }
 
   // 3. Fallback check: If we still don't have an array, abort gracefully instead of crashing
-  if (!targetArray || typeof targetArray.find !== 'function') {
-    console.error("Expected an array but received type:", typeof cloned, "Structure:", cloned);
+  if (!targetArray || typeof targetArray.find !== "function") {
+    console.error(
+      "Expected an array but received type:",
+      typeof cloned,
+      "Structure:",
+      cloned,
+    );
     return cloned; // Return it untouched to protect the request cycle from breaking
   }
 
   // 4. Safe execution
-  const target = targetArray.find(item => item && (item.id === sectionId || item._id === sectionId));
+  const target = targetArray.find(
+    (item) => item && (item.id === sectionId || item._id === sectionId),
+  );
 
   if (!target) {
-    console.warn(`No item matching sectionId "${sectionId}" was found in the target array.`);
+    console.warn(
+      `No item matching sectionId "${sectionId}" was found in the target array.`,
+    );
   }
 
   return target;
@@ -349,8 +359,8 @@ router.post(
 
     const selected = req.body?.rewriteIds?.length
       ? analysis.bulletRewrites.filter((r) =>
-        req.body?.rewriteIds.includes(r?._id.toString()),
-      )
+          req.body?.rewriteIds.includes(r?._id.toString()),
+        )
       : analysis.bulletRewrites;
 
     if (!selected.length) {
@@ -425,8 +435,8 @@ router.get(
         versionNumber: fromV.versionNumber,
       },
       to: {
-        id: toV._id,            // Fixed reference
-        label: toV?.label,      // Fixed reference
+        id: toV._id, // Fixed reference
+        label: toV?.label, // Fixed reference
         versionNumber: toV.versionNumber, // Fixed key name mismatch (was: 'to: fromV.versionNumber')
       },
       parts,

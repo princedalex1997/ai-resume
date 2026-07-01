@@ -214,8 +214,6 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function callGemini(prompt) {
   const start = Date.now();
-
-  // Ensure your AI instance is correctly referencing the SDK method
   const result = await ai.models.generateContent({
     model: env.geminiModal,
     contents: [{ role: "user", parts: [{ text: prompt }] }],
@@ -226,9 +224,6 @@ async function callGemini(prompt) {
     },
   });
 
-  // console.log(`Gemini took ${Date.now() - start}ms`);
-
-  // Handle both function and property styles safely
   const text = typeof result.text === "function" ? result.text() : result.text;
 
   if (!text) throw new Error("Empty Response from Gemini");
@@ -239,9 +234,6 @@ async function callGemini(prompt) {
   };
 }
 
-/**
- * Robust error checker covering both flat messages and SDK structural properties
- */
 function isRetryableError(error) {
   if (!error) return false;
 
@@ -267,74 +259,64 @@ function isRetryableError(error) {
 let activeAnalyses = 0;
 
 async function analyzeResume({ rawText, targetRole }) {
-  // Increment counter safely at entry execution
   activeAnalyses++;
-  // console.log("Active analyses:", activeAnalyses);
+  console.log(
+    "console.log(process.env.GEMINI_API_KEY);".yellow,
+    process.env.GEMINI_API_KEY,
+  );
+  const MAX_RETRIES = 3;
+  const INITIAL_DELAY = 2000;
 
   if (!ai) {
-    activeAnalyses--; // Decrement before throwing early exit error
     throw ApiError.internal("GEMINI_API_KEY is not configured on the server");
   }
 
   try {
     const prompt = buildPrompt({ rawText, targetRole });
-    // console.log("Prompt chars:", prompt.length);
 
-    let lastErr;
-    let delay = 2000;
+    let lastError;
+    let delay = INITIAL_DELAY;
 
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
         const { text, usage } = await callGemini(prompt);
 
         const parsed = JSON.parse(text);
         const validated = analysisValidater.parse(parsed);
 
-        console.log(
-  "RAW GEMINI:",
-  JSON.stringify(parsed, null, 2)
-);
-
         return {
           analysis: validated,
           model: env.geminiModal,
-          promptTokens: usage.promptTokenCount || 0,
-          responseTokens: usage.candidatesTokenCount || 0,
+          promptTokens: usage?.promptTokenCount ?? 0,
+          responseTokens: usage?.candidatesTokenCount ?? 0,
         };
       } catch (error) {
-        lastErr = error;
-
-        console.error(
-          `Gemini attempt ${attempt} failed:`,
-          error?.message || error,
-        );
-
-        // Break early if error cannot be resolved by waiting, or we ran out of attempts
-        if (!isRetryableError(error) || attempt === 3) {
+        lastError = error;
+        console.error(`Gemini attempt ${attempt}/${MAX_RETRIES} failed`, error);
+        if (!isRetryableError(error) || attempt === MAX_RETRIES) {
           break;
         }
 
-        // console.log(`Retrying in ${delay}ms...`);
         await sleep(delay);
-        delay *= 2; // Exponential Backoff
+        delay *= 2;
       }
     }
 
-    // If loop finishes or breaks without returning a value, handle failure states
-    if (isRetryableError(lastErr)) {
+    if (isRetryableError(lastError)) {
       throw ApiError.toomany(
         "AI service is currently busy. Please try again in a few minutes.",
       );
     }
 
     throw ApiError.internal(
-      `Gemini analysis failed: ${lastErr?.message || "Unknown error"}`,
+      `Gemini analysis failed: ${lastError?.message || "Unknown error"}`,
     );
   } finally {
-    // Crucial: Finally block sits at the root function scope level.
-    // This guarantees it fires exactly ONCE when the whole process terminates.
     activeAnalyses--;
-    console.log("Analysis finalized. Remaining active slots:", activeAnalyses);
+
+    console.log(
+      `Analysis finalized. Remaining active slots: ${activeAnalyses}`,
+    );
   }
 }
 
